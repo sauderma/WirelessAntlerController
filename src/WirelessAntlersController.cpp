@@ -49,7 +49,7 @@
 //#define FREQUENCY   RF69_433MHZ
 //#define FREQUENCY   RF69_868MHZ
 #define FREQUENCY     RF69_915MHZ // choose this one
-#define FREQUENCY_EXACT 905500000
+#define FREQUENCY_EXACT 915000000
 #define ENCRYPTKEY  "rcmhprodrcmhprod" //16-bytes or ""/0/null for no encryption
 #define IS_RFM69HW_HCW  //uncomment only for RFM69HW/HCW! Leave out if you have RFM69W/CW!
 //*****************************************************************************************************************************
@@ -113,7 +113,6 @@ typedef struct {
   byte  state; // What state Hat node is currently in
   bool  antlerState; // What state the antlers are currently in
   float vcc; // VCC read from battery monitor
-  int   rssi; // RSSI signal from last received transmission
   int   temperature; // Temperature of the radio
 } ToControllersPayload;
 ToControllersPayload controllersPayload;
@@ -152,9 +151,9 @@ void setup() {
   radio.enableAutoPower(ATC_RSSI);
 #endif
 
-if (CONFIG.isHW) {
+#ifdef IS_RFM69HW_HCW
   radio.setHighPower(); //must include this only for RFM69HW/HCW!
-}
+#endif
 
   Serial.print("Start node ");
   Serial.println(NODEID);
@@ -290,12 +289,11 @@ void loop(){
       controllersPayload = *(ToControllersPayload*)radio.DATA; // We'll hope radio.DATA actually contains our struct and not something else
 
       //Send the data straight out the serial, we don't actually need to do anything with it internally
-      Serial.print("ID:");Serial.println(controllersPayload.nodeId);      // Node IS
+      Serial.print("ID:");Serial.println(controllersPayload.nodeId);      // Node ID
       Serial.print("VS:");Serial.println(controllersPayload.version);     // Payload version
       Serial.print("ST:");Serial.println(controllersPayload.state);       // Node state
       Serial.print("AS:");Serial.println(controllersPayload.antlerState); // Antler state
       Serial.print("VC:");Serial.println(controllersPayload.vcc);         // Battery voltage
-      Serial.print("RS:");Serial.println(controllersPayload.rssi);        // RSSI strength
       Serial.print("TP:");Serial.println(controllersPayload.temperature); // Radio temperature
     
     //} // close valid payload
