@@ -9,19 +9,19 @@
 // 
 // **********************************************************************************
 
-#include <RFM69.h>         //get it here: https://github.com/lowpowerlab/RFM69
-#include <RFM69_ATC.h>     //get it here: https://github.com/lowpowerlab/RFM69
-#include <RFM69_OTA.h>     //get it here: https://github.com/lowpowerlab/RFM69
-#include <SPIFlash.h>      //get it here: https://github.com/lowpowerlab/spiflash
-//#include <EEPROMex.h>      //get it here: http://playground.arduino.cc/Code/EEPROMex
+#include <RFM69.h>         // https://github.com/lowpowerlab/RFM69
+#include <RFM69_ATC.h>     // https://github.com/lowpowerlab/RFM69
+#include <RFM69_OTA.h>     // https://github.com/lowpowerlab/RFM69
+#include <SPIFlash.h>      // https://github.com/lowpowerlab/spiflash
+#include <SafeString.h>    // https://www.forward.com.au/pfod/ArduinoProgramming/SafeString/index.html
+#include <SafeStringReader.h> // https://www.forward.com.au/pfod/ArduinoProgramming/SafeString/index.html
 
-#define NODEID       3  // node ID used for this unit
+#define NODEID       3
 #define NETWORKID    150
 #define GATEWAY1     1
 #define GATEWAY2     2
 #define GATEWAY3     3
 #define BROADCASTID  0
-//Match frequency to the hardware version of the radio on your Moteino (uncomment one):
 #define FREQUENCY     RF69_915MHZ
 #define FREQUENCY_EXACT 915000000
 #define ENCRYPTKEY  "rcmhprodrcmhprod" //16-bytes or ""/0/null for no encryption
@@ -42,7 +42,7 @@
 #define DEBUG_MODE  //uncomment to enable debug comments
 #define VERSION 1   // Version of code programmed
 
-byte currentState; // What is the current state of this module?
+int currentState; // What is the current state of this module?
 
 SPIFlash flash(SS_FLASHMEM, FLASH_ID);
 
@@ -55,81 +55,63 @@ SPIFlash flash(SS_FLASHMEM, FLASH_ID);
 char input = 0;
 long lastPeriod = -1;
 
-// struct for EEPROM config
-struct configuration {
-  byte frequency; // What family are we working in? Basically always going to be 915Mhz in RCMH.
-  long frequency_exact; // The exact frequency we're operating at.
-  byte isHW;
-  byte nodeID;    // 8bit address (up to 255)
-  byte networkID; // 8bit address (up to 255)
-  byte gatewayID; // 8bit address (up to 255)
-  char encryptionKey[16];
-  byte state;     // Just in case we want to save a state setting.
-  byte codeversion; // What version code we're using
-} CONFIG;
+createSafeStringReader(sfReader, 80, '\n'); // Create reader up to 80 characters for strings coming in via 
+                                            // serial with new line character as the delimiter.
+
+//createSafeStringReader()
+
+
 
 // struct for packets being sent to antler hats
 typedef struct {
-  byte  nodeId; // Sender node ID
-  byte  version; // What version payload
-  byte  state; // What state are we being told to go into?
-  bool  antlerState; // What state do we want the actual antlers to be in?
-  bool  antlerStateUse; // Should we pay attention to the incoming Antler state?
-  long  sleepTime; // In milliseconds. Used if we want to overwrite pre-defined states
-  bool  sleepTimeUse; // Should we pay attention to the incoming sleep time?
+  int  nodeId; // Sender node ID
+  int  version; // What version payload
+  int  nodeState; // What state should node go into?
+  int  antlerState; // What state should the actual antlers to be in?
+  long sleepTime; // In milliseconds. Used if we want to overwrite pre-defined states
 } ToAntlersPayload;
-ToAntlersPayload antlersPayload;
+//ToAntlersPayload antlersPayload;
 
 // struct for packets being sent to controllers
 typedef struct {
-  byte  nodeId; // Sender node ID
-  byte  version; // What version payload
-  byte  state; // What state Hat node is currently in
-  bool  antlerState; // What state the antlers are currently in
+  int  nodeId; // Sender node ID
+  int  version; // What version payload
+  int  nodeState; // What state Hat node is currently in
+  int  antlerState; // What state the antlers are currently in
   float vcc; // VCC read from battery monitor
   int   temperature; // Temperature of the radio
 } ToControllersPayload;
 ToControllersPayload controllersPayload;
 
-  void Blink(byte PIN, byte DELAY_MS, byte loops)
-{
-  for (byte i=0; i<loops; i++)
-  {
-    digitalWrite(PIN,HIGH);
-    delay(DELAY_MS);
-    digitalWrite(PIN,LOW);
-    delay(DELAY_MS);
-  }
-}
-
-//*************************************
-// Setup                              *
-//*************************************
+//*****************************************************************************
+// Setup                                                                      *
+//*****************************************************************************
 
 void setup() {
 
   pinMode(LED_BUILTIN, OUTPUT);
 
-  //EEPROM.setMaxAllowedWrites(10000);
-  //EEPROM.readBlock(0, CONFIG); pinMode(LED_BUILTIN, OUTPUT);
-
   Serial.begin(SERIAL_BAUD);
   delay(1000);
+
+  SafeString::setOutput(Serial); // enable error messages and debug() output to be sent to Serial
+  sfReader.connect(Serial); // connect reader to serial
+  sfReader.echoOn(); // not sure
+
   radio.initialize(FREQUENCY,NODEID,NETWORKID);
-  radio.encrypt(ENCRYPTKEY); //OPTIONAL
+  radio.encrypt(ENCRYPTKEY);
 
-  //nodeID=CONFIG.nodeID;
-  radio.setFrequency(FREQUENCY_EXACT); //set frequency to some custom frequency
+  radio.setFrequency(FREQUENCY_EXACT);
 
-#ifdef ENABLE_ATC
-  radio.enableAutoPower(ATC_RSSI);
-#endif
+  #ifdef ENABLE_ATC
+    radio.enableAutoPower(ATC_RSSI);
+  #endif
 
-#ifdef IS_RFM69HW_HCW
-  radio.setHighPower(); //must include this only for RFM69HW/HCW!
-#endif
+  #ifdef IS_RFM69HW_HCW
+    radio.setHighPower(); // Only for RFM69HW/HCW. Damage may occur if enabled on non-HW/HCW nodes.
+  #endif
 
-  Serial.print("Start node ");
+  Serial.print("Starting node: ");
   Serial.println(NODEID);
 
   if (flash.initialize())
@@ -153,6 +135,76 @@ void setup() {
 #endif
 }
 
+//*****************************************************************************
+// The Functions                                                              *
+//*****************************************************************************
+
+//*************************************
+// Radio send function                *
+//*************************************
+
+void sendAntlerPayload(ToAntlersPayload payload, byte node = 0)
+{
+  radio.send(node, (const void*)(&payload), sizeof(payload), false);
+
+  Serial.println(payload.version);
+  Serial.println(payload.nodeState);
+  Serial.println(payload.antlerState);
+  Serial.println(payload.sleepTime);
+}
+
+//*************************************
+// Parse serial data                  *
+//*************************************
+
+bool parseSerialData (SafeString& msg) {
+  ToAntlersPayload antlerPayload; // Struct to populate
+  antlerPayload.nodeId = NODEID; // First payload value is the node ID of this controller
+
+  int toNode; // Node we're going to be sending to
+  cSF(sfKey, 2); // temp SafeString to receive keys, max field len is 2;
+  cSF(sfValue, 10); // temp SafeString to receive values, max field len is 10;
+  char delimKey[] = ":"; // keys separated from values by :
+  char delimValue[] = ","; // key/value pairs are separated by commas
+  //bool returnEmptyFields = true; // return empty field for ,,
+  int idx = 2;  // Index holding our location in the message.
+                // Skip the first two characters, which should be a "!!"
+
+  idx = msg.nextToken(sfKey, idx, delimKey); // get the first field, stick it into "sfKey"
+  if (sfKey != "ND")  // Check the first field is "ND" (node ID) otherwise something went wrong.
+    return false;
+  idx = msg.nextToken(sfValue, idx, delimValue); //Get the Node ID
+  sfValue.toInt(toNode); // First value is the node we're sending to (but that's not part of the payload).
+  
+  idx = msg.nextToken(sfKey, idx, delimKey); // get Version
+  if (sfKey != "VR")
+    return false;
+  idx = msg.nextToken(sfValue, idx, delimValue);
+  sfValue.toInt(antlerPayload.version);
+  idx = msg.nextToken(sfKey, idx, delimKey); // get Node state
+  if (sfKey != "NS")
+    return false;
+  idx = msg.nextToken(sfValue, idx, delimValue);
+  sfValue.toInt(antlerPayload.nodeState);
+  idx = msg.nextToken(sfKey, idx, delimKey); // get Antler state
+  if (sfKey != "AS")
+    return false;
+  idx = msg.nextToken(sfValue, idx, delimValue);
+  sfValue.toInt(antlerPayload.antlerState);
+  idx = msg.nextToken(sfKey, idx, delimKey); // get node sleep time
+  if (sfKey != "SL")
+    return false;
+  idx = msg.nextToken(sfValue, idx, delimValue);
+  sfValue.toLong(antlerPayload.sleepTime);
+
+  // Send all the above stuff over to the nodes
+  sendAntlerPayload(antlerPayload, toNode);
+
+  return true;
+
+}
+
+
 //*************************************
 // Blink function                     *
 //*************************************
@@ -171,70 +223,41 @@ void blinkLED(int blinkTime, int blinkNumber)
   // }
 }
 
-void sendAntlerPayload(byte hatState, bool antlerState, bool antlerStateUse, long sleepTime, bool sleepTimeUse, byte node = 0)
-{
-  antlersPayload.nodeId = NODEID;
-  antlersPayload.version = VERSION;
-  antlersPayload.state = hatState;
-  antlersPayload.antlerState = antlerState;
-  antlersPayload.antlerStateUse = antlerStateUse;
-  antlersPayload.sleepTime = sleepTime;
-  antlersPayload.sleepTimeUse = sleepTimeUse;
-
-//  if (radio.send(255, (const void*)(&antlersPayload), sizeof(antlersPayload), false))
-//    Serial.println("Sent payload");
-//  else Serial.println("Send failed for some reason");
-
-  //radio.send(255, (const void*)(&antlersPayload), sizeof(antlersPayload), false);
-  //  antlersPayload.nodeId = NODEID;
-  
-  radio.send(node, (const void*)(&antlersPayload), sizeof(antlersPayload), false);
-    //Serial.println("Send succeeded");
-  //else Serial.println("Send failed");
-
-  // if (radio.canSend()) {
-  //   Serial.println("Radio ready to send");
-  // }
-
-  // if (radio.sendWithRetry(HATID, "Hi", 2)) {//target node Id, message as string or byte array, message length
-  //   Serial.println("Send worked");
-  //   }
-  // else {
-  //   Serial.println("Send failed");
-  // }
-  Serial.println(antlersPayload.version);
-  Serial.println(antlersPayload.state);
-  Serial.println(antlersPayload.antlerState);
-  Serial.println(antlersPayload.antlerStateUse);
-  Serial.println(antlersPayload.sleepTime);
-  Serial.println(antlersPayload.sleepTimeUse);
-}
-
-
-//*************************************
-// Loop                               *
-//*************************************
+//*****************************************************************************
+// The Loop                                                                   *
+//*****************************************************************************
 
 void loop(){
 
     // Handle serial input
-    if (Serial.available() > 0) {
-      input = Serial.parseInt();
-      //int intInput = input - '0'
+    // if (Serial.available() > 0) {
+    //   input = Serial.parseInt();
+    //   //int intInput = input - '0'
 
-      if (input >= 1 && input <= 9) { //0-9
-        Serial.print("\nSending state "); Serial.println(input);
-        sendAntlerPayload((byte)input, 0, 0, 0, 0);
-      } 
-    }  // close if Serial.available()
+    //   if (input >= 1 && input <= 9) { //0-9
+    //     Serial.print("\nSending state "); Serial.println(input);
+    //     sendAntlerPayload((byte)input, 0, 0, 0, 0);
+    //   } 
+    // }  // close if Serial.available()
+
+  // sfReader is our serial port handler, check for incoming serial data
+  if (sfReader.read()) {
+    sfReader.trim(); // remove any leading/trailing white space
+    if (sfReader.startsWith("!!")) {
+        parseSerialData(sfReader); // Process incoming data string
+      }
+      else {
+        // process something else
+      }
+    }
   
-  // Check for existing RF data
+  // Check for new RF data
   if (radio.receiveDone()) {
 
     if (radio.ACKRequested()) {
       radio.sendACK();
       #ifdef DEBUG_MODE
-        Serial.print(" - ACK sent");
+        Serial.println(" - ACK sent");
       #endif
     }
     
@@ -264,8 +287,8 @@ void loop(){
 
       //Send the data straight out the serial, we don't actually need to do anything with it internally
       Serial.print("ID:");Serial.println(controllersPayload.nodeId);      // Node ID
-      Serial.print("VS:");Serial.println(controllersPayload.version);     // Payload version
-      Serial.print("ST:");Serial.println(controllersPayload.state);       // Node state
+      Serial.print("VR:");Serial.println(controllersPayload.version);     // Payload version
+      Serial.print("NS:");Serial.println(controllersPayload.nodeState);       // Node state
       Serial.print("AS:");Serial.println(controllersPayload.antlerState); // Antler state
       Serial.print("VC:");Serial.println(controllersPayload.vcc);         // Battery voltage
       Serial.print("TP:");Serial.println(controllersPayload.temperature); // Radio temperature
@@ -274,3 +297,7 @@ void loop(){
   } // close radio.receiveDone()
 } // close loop()
 
+
+!!ID:1,VR:1,NS:1,AS:0
+
+001_01_110
