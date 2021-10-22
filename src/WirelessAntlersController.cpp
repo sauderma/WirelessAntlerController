@@ -15,6 +15,7 @@
 #include <SPIFlash.h>      // https://github.com/lowpowerlab/spiflash
 #include <SafeString.h>    // https://www.forward.com.au/pfod/ArduinoProgramming/SafeString/index.html
 #include <SafeStringReader.h> // https://www.forward.com.au/pfod/ArduinoProgramming/SafeString/index.html
+#include <millisDelay.h>      // https://www.forward.com.au/pfod/ArduinoProgramming/SafeString/index.html
 #include <DebugLog.h>
 
 #define NODEID       1
@@ -40,7 +41,7 @@
 
 #define ANTLER_PIN   6 //PWM pin for controlling antler LEDs
 
-#define DEBUG_MODE  //uncomment to enable debug comments
+//#define DEBUG_MODE  //uncomment to enable debug comments
 #define VERSION 1   // Version of code programmed
 
 int currentState; // What is the current state of this module?
@@ -54,10 +55,12 @@ SPIFlash flash(SS_FLASHMEM, FLASH_ID);
 #endif
 
 char input = 0;
-long lastPeriod = -1;
+//long lastPeriod = -1;
 
 createSafeStringReader(sfReader, 80, '\n'); // Create reader up to 80 characters for strings coming in via 
                                             // serial with new line character as the delimiter.
+
+millisDelay radioSendTimer; // Delay counter to send packet every 30ms.
 
 // struct for packets being sent to antler hats
 typedef struct {
@@ -67,7 +70,7 @@ typedef struct {
   byte  antlerState; // What state should the actual antlers to be in?
   long sleepTime; // In milliseconds. Used if we want to overwrite pre-defined states
 } ToAntlersPayload;
-//ToAntlersPayload antlersPayload;
+ToAntlersPayload antlerPayload;
 
 // struct for packets being sent to controllers
 typedef struct {
@@ -130,6 +133,8 @@ void setup() {
   radio.writeReg(0x06, 0x33);  //REG_FDEVLSB: 300khz (0x1333)
   radio.writeReg(0x29, 240);   //set REG_RSSITHRESH to -120dBm
 #endif
+
+  radioSendTimer.start(30);
 }
 
 //*****************************************************************************
@@ -140,12 +145,13 @@ void setup() {
 // Radio send function                *
 //*************************************
 
-void sendAntlerPayload(ToAntlersPayload payload, byte node = 0)
+void sendAntlerPayload(ToAntlersPayload payload = antlerPayload, byte node = 0)
 {
+
   radio.send(node, (const void*)(&payload), sizeof(payload), false);
   LOG_INFO("Antler payload sent");
+  radioSendTimer.start(30);
 
-  //radio.send(0, "hi", 2);
 }
 
 //*************************************
@@ -153,22 +159,17 @@ void sendAntlerPayload(ToAntlersPayload payload, byte node = 0)
 //*************************************
 
 bool parseSerialData (SafeString& msg) {
-  ToAntlersPayload antlerPayload; // Struct to populate
+  //ToAntlersPayload antlerPayload; // Struct to populate
   antlerPayload.nodeId = NODEID; // First payload value is the node ID of this controller
 
   int tempInt;
-  byte tempByte;
+  //byte tempByte;
 
   int toNode; // Node we're going to be sending to
   cSF(sfKey, 30); // temp SafeString to receive keys, max field len is 2;
-  //cSF(sfValue, 20); // temp SafeString to receive values, max field len is 10;
-  char delimKey[] = ":,"; // keys separated from values by :
-  //char delimValue[] = ","; // key/value pairs are separated by commas
-  //bool returnEmptyFields = true; // return empty field for ,,
-  int idx = 2;  // Index holding our location in the message.
-                // Skip the first two characters, which should be a "!!"
+  char delimKey[] = ":,"; // delimiters, : for key:value and , for key to key.
 
-  msg.removeBefore(2);
+  msg.removeBefore(2); // Remove the first two !! from the incoming packet.
 
   msg.nextToken(sfKey, delimKey); // get the Node ID header, stick it into "sfKey"
   LOG_INFO("sfKey Node header is: "); LOG_INFO(sfKey);
@@ -189,10 +190,9 @@ bool parseSerialData (SafeString& msg) {
   msg.nextToken(sfKey, delimKey); // Get Version value
   LOG_INFO("sfKey Version value is: "); LOG_INFO(sfKey);
   //sfKey.toInt(antlerPayload.version);
-  LOG_WARN(antlerPayload.version);
   sfKey.toInt(tempInt);
   antlerPayload.version = byte(tempInt);
-
+  LOG_INFO(antlerPayload.version);
 
   msg.nextToken(sfKey, delimKey); // get Node state header
   LOG_INFO("sfKey Node State header is: "); LOG_INFO(sfKey);
@@ -203,9 +203,9 @@ bool parseSerialData (SafeString& msg) {
   msg.nextToken(sfKey, delimKey); // get Node state value
   LOG_INFO("sfKey Node State value is: "); LOG_INFO(sfKey);
   //sfKey.toInt(antlerPayload.nodeState);
-  LOG_WARN(antlerPayload.nodeState);
   sfKey.toInt(tempInt);
   antlerPayload.nodeState = byte(tempInt);
+  LOG_INFO(antlerPayload.nodeState);
 
   msg.nextToken(sfKey, delimKey); // get Antler state header
   LOG_INFO("sfKey Antler State header is: "); LOG_INFO(sfKey);
@@ -216,9 +216,9 @@ bool parseSerialData (SafeString& msg) {
   msg.nextToken(sfKey, delimKey); // get Antler state value
   LOG_INFO("sfKey Antler State header is: "); LOG_INFO(sfKey);
   //sfKey.toInt(antlerPayload.antlerState);
-  LOG_WARN(antlerPayload.antlerState);
   sfKey.toInt(tempInt);
   antlerPayload.antlerState = byte(tempInt);
+  LOG_INFO(antlerPayload.antlerState);
 
   msg.nextToken(sfKey, delimKey); // get node sleep time header
   LOG_INFO("sfKey Time header is: "); LOG_INFO(sfKey);
@@ -229,7 +229,7 @@ bool parseSerialData (SafeString& msg) {
   msg.nextToken(sfKey, delimKey); // get node sleep time value
   LOG_INFO("sfKey Time value is: "); LOG_INFO(sfKey);
   sfKey.toLong(antlerPayload.sleepTime);
-  LOG_WARN(antlerPayload.sleepTime);
+  LOG_INFO(antlerPayload.sleepTime);
 
   // Send all the above stuff over to the nodes
   sendAntlerPayload(antlerPayload, toNode);
@@ -245,7 +245,8 @@ bool parseSerialData (SafeString& msg) {
 
 void blinkLED(int blinkTime, int blinkNumber)
 {
-
+  // TODO LOW PRIORITY
+  // fill this in if we want to blink the on-board LED in various patterns for easier troubleshooting
 }
 
 //*****************************************************************************
@@ -277,16 +278,16 @@ void loop(){
     // Disabled for the controllers.
     // CheckForWirelessHEX(radio, flash, false);
 
-  //  #ifdef DEBUG_MODE
-  //     Serial.print("Got [");
-  //     Serial.print(radio.SENDERID);
-  //     Serial.print(':');
-  //     Serial.print(radio.DATALEN);
-  //     Serial.print("] > ");
-  //     for (byte i = 0; i < radio.DATALEN; i++)
-  //       Serial.print((char)radio.DATA[i], HEX);
-  //     Serial.println();
-  //   #endif
+   #ifdef DEBUG_MODE
+      Serial.print("Got [");
+      Serial.print(radio.SENDERID);
+      Serial.print(':');
+      Serial.print(radio.DATALEN);
+      Serial.print("] > ");
+      for (byte i = 0; i < radio.DATALEN; i++)
+        Serial.print((char)radio.DATA[i], HEX);
+      Serial.println();
+    #endif
 
     // Check if valid packet. In future perhaps add checking for different payload versions
 //    if (radio.DATALEN != sizeof(ToControllersPayload)) {
@@ -296,9 +297,11 @@ void loop(){
 //    }
 //    else
 //    {
+
       controllersPayload = *(ToControllersPayload*)radio.DATA; // We'll hope radio.DATA actually contains our struct and not something else
 
-      //Send the data straight out the serial, we don't actually need to do anything with it internally
+      //Send the incoming RF data straight out the serial, we don't actually need to do anything with it internally.
+      // TODO LOW PRIORITY - If it makes sense, maybe use the safestring serial library to package this and send it non-blocking?
       Serial.print("##");
       Serial.print("ID:");Serial.print(controllersPayload.nodeId);Serial.print(",");      // Node ID
       Serial.print("VR:");Serial.print(controllersPayload.version);Serial.print(",");     // Payload version
@@ -309,4 +312,8 @@ void loop(){
     
     //} // close valid payload
   } // close radio.receiveDone()
+
+  if (radioSendTimer.justFinished()) {
+    sendAntlerPayload();
+  }
 } // close loop()
