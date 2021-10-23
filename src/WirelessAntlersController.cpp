@@ -54,13 +54,16 @@ SPIFlash flash(SS_FLASHMEM, FLASH_ID);
   RFM69 radio;
 #endif
 
-char input = 0;
+//char input = 0;
 //long lastPeriod = -1;
 
 createSafeStringReader(sfReader, 80, '\n'); // Create reader up to 80 characters for strings coming in via 
                                             // serial with new line character as the delimiter.
 
+createSafeString(serialPacket, 80); // string for assembling the outgoing serial packet
+
 millisDelay radioSendTimer; // Delay counter to send packet every 30ms.
+millisDelay radioStopSending; // Stop sending out states after X time.
 
 // struct for packets being sent to antler hats
 typedef struct {
@@ -111,6 +114,8 @@ void setup() {
     radio.setHighPower(); // Only for RFM69HW/HCW. Damage may occur if enabled on non-HW/HCW nodes.
   #endif
 
+  //radio.spyMode();
+
   Serial.print("Starting node: ");
   Serial.println(NODEID);
 
@@ -134,7 +139,7 @@ void setup() {
   radio.writeReg(0x29, 240);   //set REG_RSSITHRESH to -120dBm
 #endif
 
-  radioSendTimer.start(30);
+  //radioSendTimer.start(30);
 }
 
 //*****************************************************************************
@@ -150,7 +155,7 @@ void sendAntlerPayload(ToAntlersPayload payload = antlerPayload, byte node = 0)
 
   radio.send(node, (const void*)(&payload), sizeof(payload), false);
   LOG_INFO("Antler payload sent");
-  radioSendTimer.start(30);
+  radioSendTimer.repeat();
 
 }
 
@@ -160,10 +165,9 @@ void sendAntlerPayload(ToAntlersPayload payload = antlerPayload, byte node = 0)
 
 bool parseSerialData (SafeString& msg) {
   //ToAntlersPayload antlerPayload; // Struct to populate
-  antlerPayload.nodeId = NODEID; // First payload value is the node ID of this controller
+  antlerPayload.nodeId = NODEID; // Populate the first payload value with the node ID of this controller
 
   int tempInt;
-  //byte tempByte;
 
   int toNode; // Node we're going to be sending to
   cSF(sfKey, 30); // temp SafeString to receive keys, max field len is 2;
@@ -189,7 +193,6 @@ bool parseSerialData (SafeString& msg) {
   }
   msg.nextToken(sfKey, delimKey); // Get Version value
   LOG_INFO("sfKey Version value is: "); LOG_INFO(sfKey);
-  //sfKey.toInt(antlerPayload.version);
   sfKey.toInt(tempInt);
   antlerPayload.version = byte(tempInt);
   LOG_INFO(antlerPayload.version);
@@ -202,10 +205,14 @@ bool parseSerialData (SafeString& msg) {
   }
   msg.nextToken(sfKey, delimKey); // get Node state value
   LOG_INFO("sfKey Node State value is: "); LOG_INFO(sfKey);
-  //sfKey.toInt(antlerPayload.nodeState);
   sfKey.toInt(tempInt);
   antlerPayload.nodeState = byte(tempInt);
   LOG_INFO(antlerPayload.nodeState);
+
+  
+  currentState = tempInt;
+  LOG_WARN("The tempInt currentstate is:");
+  LOG_WARN(currentState);
 
   msg.nextToken(sfKey, delimKey); // get Antler state header
   LOG_INFO("sfKey Antler State header is: "); LOG_INFO(sfKey);
@@ -215,7 +222,6 @@ bool parseSerialData (SafeString& msg) {
   }
   msg.nextToken(sfKey, delimKey); // get Antler state value
   LOG_INFO("sfKey Antler State header is: "); LOG_INFO(sfKey);
-  //sfKey.toInt(antlerPayload.antlerState);
   sfKey.toInt(tempInt);
   antlerPayload.antlerState = byte(tempInt);
   LOG_INFO(antlerPayload.antlerState);
@@ -231,23 +237,40 @@ bool parseSerialData (SafeString& msg) {
   sfKey.toLong(antlerPayload.sleepTime);
   LOG_INFO(antlerPayload.sleepTime);
 
-  // Send all the above stuff over to the nodes
+  // Send all the above stuff to the nodes
   sendAntlerPayload(antlerPayload, toNode);
+
+  switch (currentState) {
+  case 1:
+    radioSendTimer.start(30);       // Send ever 30 milliseconds
+    radioStopSending.start(30000);  // stop broadcasting after 15 seconds
+    break;
+  case 2:
+    radioSendTimer.start(30);
+    radioStopSending.stop();
+    break;
+  case 3:
+    radioSendTimer.start(30);
+    radioStopSending.stop();
+    break;
+  case 4:
+    radioSendTimer.start(30);
+    radioStopSending.stop();
+    break;
+  case 5:
+    radioSendTimer.start(30);
+    radioStopSending.start(15000);
+    break;
+  case 6:
+    radioSendTimer.start(30);
+    radioStopSending.start(15000);
+    break;
+  }
 
   return true;
 
 }
 
-
-//*************************************
-// Blink function                     *
-//*************************************
-
-void blinkLED(int blinkTime, int blinkNumber)
-{
-  // TODO LOW PRIORITY
-  // fill this in if we want to blink the on-board LED in various patterns for easier troubleshooting
-}
 
 //*****************************************************************************
 // The Loop                                                                   *
@@ -259,7 +282,7 @@ void loop(){
   if (sfReader.read()) {
     sfReader.trim(); // remove any leading/trailing white space
     if (sfReader.startsWith("!!")) {
-        parseSerialData(sfReader); // Process incoming data string
+        parseSerialData(sfReader); // Process data string from Medialon.
       }
       else {
         LOG_WARN("Incoming serial packet did not start with !!");
@@ -275,7 +298,7 @@ void loop(){
     }
     
     // Check for a new OTA sketch. If so, update will be applied and unit restarted.
-    // Disabled for the controllers.
+    // Disabled for the RFGateway M4 controllers.
     // CheckForWirelessHEX(radio, flash, false);
 
    #ifdef DEBUG_MODE
@@ -290,28 +313,39 @@ void loop(){
     #endif
 
     // Check if valid packet. In future perhaps add checking for different payload versions
-//    if (radio.DATALEN != sizeof(ToControllersPayload)) {
-//      #ifdef DEBUG_MODE
-//        Serial.print("Invalid payload received, not matching Payload struct!");
-//      #endif
-//    }
-//    else
-//    {
+    //if (radio.DATALEN != sizeof(ToControllersPayload)) {
+    if (radio.DATALEN == 10) { // We'll hope radio.DATA actually contains antler data and not something else
+      controllersPayload = *(ToControllersPayload*)radio.DATA;
 
-      controllersPayload = *(ToControllersPayload*)radio.DATA; // We'll hope radio.DATA actually contains our struct and not something else
+      if ((controllersPayload.nodeId > 100) && (controllersPayload.nodeId < 210)) {
 
       //Send the incoming RF data straight out the serial, we don't actually need to do anything with it internally.
       // TODO LOW PRIORITY - If it makes sense, maybe use the safestring serial library to package this and send it non-blocking?
-      Serial.print("##");
-      Serial.print("ID:");Serial.print(controllersPayload.nodeId);Serial.print(",");      // Node ID
-      Serial.print("VR:");Serial.print(controllersPayload.version);Serial.print(",");     // Payload version
-      Serial.print("NS:");Serial.print(controllersPayload.nodeState);Serial.print(",");       // Node state
-      Serial.print("AS:");Serial.print(controllersPayload.antlerState);Serial.print(","); // Antler state
-      Serial.print("VC:");Serial.print(controllersPayload.vcc);Serial.print(",");         // Battery voltage
-      Serial.print("TP:");Serial.println(controllersPayload.temperature); // Radio temperature
-    
-    //} // close valid payload
+      
+      serialPacket = "##";
+      serialPacket += "ID:"; serialPacket += controllersPayload.nodeId; serialPacket += ",";
+      serialPacket += "VR:"; serialPacket += controllersPayload.version; serialPacket +=",";
+      serialPacket += "NS:"; serialPacket += controllersPayload.nodeState; serialPacket += ",";
+      serialPacket += "AS:"; serialPacket += controllersPayload.antlerState; serialPacket += ",";
+      serialPacket += "VC:"; serialPacket += controllersPayload.vcc; serialPacket += ",";
+      serialPacket += "TP:"; serialPacket += controllersPayload.temperature;
+
+      Serial.println(serialPacket);
+
+      //Serial.print("##");
+      //Serial.print("ID:");Serial.print(controllersPayload.nodeId);Serial.print(",");      // Node ID
+      //Serial.print("VR:");Serial.print(controllersPayload.version);Serial.print(",");     // Payload version
+      //Serial.print("NS:");Serial.print(controllersPayload.nodeState);Serial.print(",");       // Node state
+      //Serial.print("AS:");Serial.print(controllersPayload.antlerState);Serial.print(","); // Antler state
+      //Serial.print("VC:");Serial.print(controllersPayload.vcc);Serial.print(",");         // Battery voltage
+      //Serial.print("TP:");Serial.println(controllersPayload.temperature); // Radio temperature
+      }
+    } // close valid payload
   } // close radio.receiveDone()
+
+  if (radioStopSending.justFinished()){
+    radioSendTimer.stop();
+  }
 
   if (radioSendTimer.justFinished()) {
     sendAntlerPayload();
