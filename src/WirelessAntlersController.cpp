@@ -45,6 +45,7 @@
 #define VERSION 1   // Version of code programmed
 
 int currentState; // What is the current state of this module?
+int toNode; // Node we're going to be sending to
 
 SPIFlash flash(SS_FLASHMEM, FLASH_ID);
 
@@ -54,9 +55,6 @@ SPIFlash flash(SS_FLASHMEM, FLASH_ID);
   RFM69 radio;
 #endif
 
-//char input = 0;
-//long lastPeriod = -1;
-
 createSafeStringReader(sfReader, 80, '\n'); // Create reader up to 80 characters for strings coming in via 
                                             // serial with new line character as the delimiter.
 
@@ -64,6 +62,8 @@ createSafeString(serialPacket, 80); // string for assembling the outgoing serial
 
 millisDelay radioSendTimer; // Delay counter to send packet every 30ms.
 millisDelay radioStopSending; // Stop sending out states after X time.
+
+
 
 // struct for packets being sent to antler hats
 typedef struct {
@@ -116,7 +116,7 @@ void setup() {
 
   //radio.spyMode();
 
-  Serial.print("Starting node: ");
+  Serial.print("Starting Controller: ");
   Serial.println(NODEID);
 
   if (flash.initialize())
@@ -130,6 +130,7 @@ void setup() {
   LOG_INFO(ENCRYPTKEY);
 
 #ifdef BR_300KBPS
+  Serial.println("doing 300kbps");
   radio.writeReg(0x03, 0x00);  //REG_BITRATEMSB: 300kbps (0x006B, see DS p20)
   radio.writeReg(0x04, 0x6B);  //REG_BITRATELSB: 300kbps (0x006B, see DS p20)
   radio.writeReg(0x19, 0x40);  //REG_RXBW: 500kHz
@@ -138,6 +139,7 @@ void setup() {
   radio.writeReg(0x06, 0x33);  //REG_FDEVLSB: 300khz (0x1333)
   radio.writeReg(0x29, 240);   //set REG_RSSITHRESH to -120dBm
 #endif
+
 
   //radioSendTimer.start(30);
 }
@@ -150,13 +152,14 @@ void setup() {
 // Radio send function                *
 //*************************************
 
-void sendAntlerPayload(ToAntlersPayload payload = antlerPayload, byte node = 0)
+void sendAntlerPayload(ToAntlersPayload payload = antlerPayload, byte node = toNode)
 {
-
+  Serial.println("trying to send a packet");
   radio.send(node, (const void*)(&payload), sizeof(payload), false);
-  LOG_INFO("Antler payload sent");
+  //LOG_INFO("Antler payload sent");
+  //LOG_INFO("Sent to node:");LOG_INFO(node);
+  Serial.println("Sent a packet");
   radioSendTimer.repeat();
-
 }
 
 //*************************************
@@ -169,102 +172,112 @@ bool parseSerialData (SafeString& msg) {
 
   int tempInt;
 
-  int toNode; // Node we're going to be sending to
   cSF(sfKey, 30); // temp SafeString to receive keys, max field len is 2;
   char delimKey[] = ":,"; // delimiters, : for key:value and , for key to key.
 
   msg.removeBefore(2); // Remove the first two !! from the incoming packet.
 
   msg.nextToken(sfKey, delimKey); // get the Node ID header, stick it into "sfKey"
-  LOG_INFO("sfKey Node header is: "); LOG_INFO(sfKey);
+  //LOG_INFO("sfKey Node header is: "); LOG_INFO(sfKey);
   if (!sfKey.equals("ND")){  // Check the first field is "ND" (node ID) otherwise something went wrong.
     LOG_WARN("ND didn't pass");
     return false;
   }
   msg.nextToken(sfKey, delimKey); //Get the Node ID value
   sfKey.toInt(toNode); // First value is the node we're sending to, save for later.
-  LOG_INFO("sfkey Node value is:"); LOG_INFO(toNode);
+  //LOG_INFO("sfkey Node value is:"); LOG_INFO(toNode);
 
   msg.nextToken(sfKey, delimKey); // get Version header
-  LOG_INFO("sfKey Version header is: "); LOG_INFO(sfKey);
+  //LOG_INFO("sfKey Version header is: "); LOG_INFO(sfKey);
   if (!sfKey.equals("VR")) {
     LOG_WARN("VS didn't pass");
     return false;
   }
   msg.nextToken(sfKey, delimKey); // Get Version value
-  LOG_INFO("sfKey Version value is: "); LOG_INFO(sfKey);
+  //LOG_INFO("sfKey Version value is: "); LOG_INFO(sfKey);
   sfKey.toInt(tempInt);
   antlerPayload.version = byte(tempInt);
-  LOG_INFO(antlerPayload.version);
+  //LOG_INFO(antlerPayload.version);
 
   msg.nextToken(sfKey, delimKey); // get Node state header
-  LOG_INFO("sfKey Node State header is: "); LOG_INFO(sfKey);
+  //LOG_INFO("sfKey Node State header is: "); LOG_INFO(sfKey);
   if (!sfKey.equals("NS")) {
     LOG_WARN("NS didn't pass");
     return false;
   }
   msg.nextToken(sfKey, delimKey); // get Node state value
-  LOG_INFO("sfKey Node State value is: "); LOG_INFO(sfKey);
+  //LOG_INFO("sfKey Node State value is: "); LOG_INFO(sfKey);
   sfKey.toInt(tempInt);
+  currentState = tempInt;
   antlerPayload.nodeState = byte(tempInt);
-  LOG_INFO(antlerPayload.nodeState);
+  //LOG_INFO(antlerPayload.nodeState);
 
   
-  currentState = tempInt;
-  LOG_WARN("The tempInt currentstate is:");
-  LOG_WARN(currentState);
+
+  //LOG_INFO("The tempInt currentstate is:");
+  //LOG_INFO(currentState);
 
   msg.nextToken(sfKey, delimKey); // get Antler state header
-  LOG_INFO("sfKey Antler State header is: "); LOG_INFO(sfKey);
+  //LOG_INFO("sfKey Antler State header is: "); LOG_INFO(sfKey);
   if (!sfKey.equals("AS")) {
     LOG_WARN("AS didn't pass");
     return false;
   }
   msg.nextToken(sfKey, delimKey); // get Antler state value
-  LOG_INFO("sfKey Antler State header is: "); LOG_INFO(sfKey);
+  //LOG_INFO("sfKey Antler State header is: "); LOG_INFO(sfKey);
   sfKey.toInt(tempInt);
   antlerPayload.antlerState = byte(tempInt);
-  LOG_INFO(antlerPayload.antlerState);
+  //LOG_INFO(antlerPayload.antlerState);
 
   msg.nextToken(sfKey, delimKey); // get node sleep time header
-  LOG_INFO("sfKey Time header is: "); LOG_INFO(sfKey);
+  //LOG_INFO("sfKey Time header is: "); LOG_INFO(sfKey);
   if (!sfKey.equals("SL")) {
     LOG_WARN("SL didn't pass");
     return false;
   }
   msg.nextToken(sfKey, delimKey); // get node sleep time value
-  LOG_INFO("sfKey Time value is: "); LOG_INFO(sfKey);
+  //LOG_INFO("sfKey Time value is: "); LOG_INFO(sfKey);
   sfKey.toLong(antlerPayload.sleepTime);
-  LOG_INFO(antlerPayload.sleepTime);
+  //LOG_INFO(antlerPayload.sleepTime);
 
   // Send all the above stuff to the nodes
   sendAntlerPayload(antlerPayload, toNode);
 
+  //Serial.println(currentState);
+
   switch (currentState) {
-  case 1:
-    radioSendTimer.start(30);       // Send ever 30 milliseconds
-    radioStopSending.start(30000);  // stop broadcasting after 15 seconds
-    break;
-  case 2:
-    radioSendTimer.start(30);
-    radioStopSending.stop();
-    break;
-  case 3:
-    radioSendTimer.start(30);
-    radioStopSending.stop();
-    break;
-  case 4:
-    radioSendTimer.start(30);
-    radioStopSending.stop();
-    break;
-  case 5:
-    radioSendTimer.start(30);
-    radioStopSending.start(15000);
-    break;
-  case 6:
-    radioSendTimer.start(30);
-    radioStopSending.start(15000);
-    break;
+    case 1:
+      radioSendTimer.start(30);       // Send ever 30 milliseconds
+      radioStopSending.start(20000);  // stop broadcasting after 20 seconds
+      break;
+    case 2:
+      radioSendTimer.start(30);
+      radioStopSending.start(20000);
+      break;
+    case 3:
+      radioSendTimer.start(30);
+      radioStopSending.stop();
+      break;
+    case 4:
+      radioSendTimer.start(30);
+      radioStopSending.stop();
+      break;
+    case 5:
+      radioSendTimer.start(30);
+      radioStopSending.start(20000);
+      break;
+    case 6:
+      radioSendTimer.start(30);
+      radioStopSending.start(20000);
+      break;
+    case 8:
+      radioSendTimer.start(30);
+      radioStopSending.start(20000);
+      break;
+    case 9:
+      //radioSendTimer.start(30);
+      radioStopSending.start(20000);
+      break;
   }
 
   return true;
@@ -314,33 +327,37 @@ void loop(){
 
     // Check if valid packet. In future perhaps add checking for different payload versions
     //if (radio.DATALEN != sizeof(ToControllersPayload)) {
-    if (radio.DATALEN == 10) { // We'll hope radio.DATA actually contains antler data and not something else
+    //if (radio.DATALEN == 10) { // We'll hope radio.DATA actually contains antler data and not something else
       controllersPayload = *(ToControllersPayload*)radio.DATA;
+      //LOG_WARN("Received a radio packet of size 10");
 
-      if ((controllersPayload.nodeId > 100) && (controllersPayload.nodeId < 210)) {
+      //if ((controllersPayload.nodeId > 100) && (controllersPayload.nodeId < 210)) {
 
       //Send the incoming RF data straight out the serial, we don't actually need to do anything with it internally.
       // TODO LOW PRIORITY - If it makes sense, maybe use the safestring serial library to package this and send it non-blocking?
       
-      serialPacket = "##";
-      serialPacket += "ID:"; serialPacket += controllersPayload.nodeId; serialPacket += ",";
-      serialPacket += "VR:"; serialPacket += controllersPayload.version; serialPacket +=",";
-      serialPacket += "NS:"; serialPacket += controllersPayload.nodeState; serialPacket += ",";
-      serialPacket += "AS:"; serialPacket += controllersPayload.antlerState; serialPacket += ",";
-      serialPacket += "VC:"; serialPacket += controllersPayload.vcc; serialPacket += ",";
-      serialPacket += "TP:"; serialPacket += controllersPayload.temperature;
+      // serialPacket = "##";
+      // serialPacket += "ID:"; serialPacket += controllersPayload.nodeId; serialPacket += ",";
+      // serialPacket += "VR:"; serialPacket += controllersPayload.version; serialPacket +=",";
+      // serialPacket += "NS:"; serialPacket += controllersPayload.nodeState; serialPacket += ",";
+      // serialPacket += "AS:"; serialPacket += controllersPayload.antlerState; serialPacket += ",";
+      // serialPacket += "VC:"; serialPacket += controllersPayload.vcc; serialPacket += ",";
+      // serialPacket += "TP:"; serialPacket += controllersPayload.temperature;
 
-      Serial.println(serialPacket);
+      // Serial.println(serialPacket);
 
-      //Serial.print("##");
-      //Serial.print("ID:");Serial.print(controllersPayload.nodeId);Serial.print(",");      // Node ID
-      //Serial.print("VR:");Serial.print(controllersPayload.version);Serial.print(",");     // Payload version
-      //Serial.print("NS:");Serial.print(controllersPayload.nodeState);Serial.print(",");       // Node state
-      //Serial.print("AS:");Serial.print(controllersPayload.antlerState);Serial.print(","); // Antler state
-      //Serial.print("VC:");Serial.print(controllersPayload.vcc);Serial.print(",");         // Battery voltage
-      //Serial.print("TP:");Serial.println(controllersPayload.temperature); // Radio temperature
-      }
-    } // close valid payload
+      Serial.print("##");
+      Serial.print("ID:");Serial.print(controllersPayload.nodeId);Serial.print(",");      // Node ID
+      Serial.print("VR:");Serial.print(controllersPayload.version);Serial.print(",");     // Payload version
+      Serial.print("NS:");Serial.print(controllersPayload.nodeState);Serial.print(",");       // Node state
+      Serial.print("AS:");Serial.print(controllersPayload.antlerState);Serial.print(","); // Antler state
+      Serial.print("VC:");Serial.print(controllersPayload.vcc);Serial.print(",");         // Battery voltage
+      Serial.print("TP:");Serial.println(controllersPayload.temperature); // Radio temperature
+      //}
+      //else {
+      //    LOG_WARN("Received a radio packet of unknown size");
+      //}
+    //} // close valid payload
   } // close radio.receiveDone()
 
   if (radioStopSending.justFinished()){
